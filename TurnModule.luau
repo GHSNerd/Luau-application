@@ -1,9 +1,6 @@
 local TurnModule = {}
-local Players = game:GetService("Players")
 local tileModule = require(game.ReplicatedStorage.TileModule)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local PathfindingService = game:GetService("PathfindingService")
-local general_methods = require(game.Workspace.general_methods)
 local CollectionService = game:GetService("CollectionService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -49,12 +46,12 @@ function TurnModule:GetMove(model:Model, goal:Part)
 		return
 	end
 
-	local marker; -- SO A POSMARKER IS ESSENTIAL
-	-- it is what we use to denote the character's position in 
+	local marker; -- A posmaarker is what I used to denote the character's position in 
 	-- the grid
 	if model.Name == "PosMarker" then
 		marker = model
-		model = marker.parent.Value
+		model = marker.parent.Value -- model is only necessary for finding the correct posmarker 
+-- to pathfind
 	else
 		local posMarkers = CollectionService:GetTagged(tostring(4745937528))
 		for index = 1, #posMarkers do 
@@ -63,17 +60,17 @@ function TurnModule:GetMove(model:Model, goal:Part)
 			end
 		end
 	end	
-	local params:RaycastParams = RaycastParams.new()
-	params.FilterDescendantsInstances = CollectionService:GetTagged(9069336078)
+	local params:RaycastParams = RaycastParams.new() -- instead of having a 2d array grid, we use raycast to get the tile on the map
+	params.FilterDescendantsInstances = CollectionService:GetTagged(9069336078) -- use raycast to find the tile in workspace
 	params.FilterType = Enum.RaycastFilterType.Include
 	local tile:RaycastResult = workspace:Raycast(marker.Position + Vector3.new(0,2,0), Vector3.new(0,-20,0), params) -- starting position
 	if goal == tile.Instance then
 		return {} -- would be stack overflow if otherwise
 	end
 	
-	local openlist= {}
-	local closedlist = {}
-	local parentTable = {}
+	local openlist= {} -- tiles to be evaluated
+	local closedlist = {} -- tiles that will no longer be searched for but can still be reparented to a better path
+	local parentTable = {} -- list of tiles and their parents. keys are the tiles and values are the parents
 	local FValueTable = {} -- f value is the estimated cost of the path to the goal + path to the tile
 	local GValueTable = {[tile.Instance] = 0} -- G value is total cost of a path towards this tile 
 	local HValueTable = {} -- heuristic value is the estimated cost from a tile to the goal
@@ -86,10 +83,6 @@ function TurnModule:GetMove(model:Model, goal:Part)
 		return GValueTable[t] + recallG(parentTable[t]) 
 	end
 
-	local isPlayer = false
-	if Players:GetPlayerFromCharacter(model) then
-		isPlayer = true
-	end
 	local strength = 30 -- Limit how many searches our algorithm can do. Incase we attempt to path to an area
 	-- COMPLETELY blocked off, and given that the map is large enough, the pathfinding algorithm will 
 	-- waste resources trying to find a valid path towards the goal by checking all tiles on the map
@@ -191,7 +184,7 @@ function TurnModule:GetMove(model:Model, goal:Part)
 	end
 	local lowest = math.huge
 	local index = nil
-	for t:BasePart, n:number in pairs(FValueTable) do
+	for t:BasePart, n:number in pairs(FValueTable) do -- find the lowest value to start the backtrack since
 		if n < lowest then
 			lowest = n 
 			index = t 
@@ -240,7 +233,8 @@ function TurnModule:CalculatePath(model: Model, tilePath) -- returns a tilePath 
 			end
 			goalIndex = i -- sset the new goal index
 		end
-		for index = #tilePath, goalIndex+1, -1 do  -- remove tiles according to maximum pathlength
+		for index = #tilePath, goalIndex+1, -1 do  -- remove tiles according to maximum path length
+			-- from the end to the beginning to prevent skipping values
 			table.remove(tilePath, index)
 		end
 		return tilePath
@@ -262,7 +256,7 @@ end
 -- rotate the model if there's a turn in the path
 function TurnModule:FaceTile(model,tile)
 	local params = RaycastParams.new()
-	params.FilterDescendantsInstances = CollectionService:GetTagged(9069336078)
+	params.FilterDescendantsInstances = CollectionService:GetTagged(9069336078) -- once again, find the initial tile
 	params.FilterType= Enum.RaycastFilterType.Include
 	local standing = workspace:Raycast(model.PrimaryPart.Position+Vector3.new(0,2,0), Vector3.new(0,-25,0), params).Instance
 	
@@ -279,35 +273,22 @@ function TurnModule:MoveModel(model:Model, tilePath)
 	if tilePath then
 		if model.Moving.Value then return end
 		local moveTiles = model:FindFirstChild("moveTiles")
-		if moveTiles.Value == 0 then
-			return 1
+		if moveTiles.Value == 0 then -- if the model has no more movement tiles available, just don't even try
+			return 1-- only for testing, 1 is the first return 
 		end
 
-		local posMarker:Part= TurnModule:GetPosMarker(model)		
+		local posMarker:Part= TurnModule:GetPosMarker(model) -- get the marker for their 
+-- position and update it to the goal. The path was already calculated so we have full faith in their
+-- movement
 		local params = RaycastParams.new()
 		params.FilterDescendantsInstances = CollectionService:GetTagged(9069336078)
 		params.FilterType = Enum.RaycastFilterType.Include
 		local inittile = workspace:Raycast(TurnModule:GetPosMarker(model).Position+Vector3.new(0,2,0), Vector3.new(0, -1000, 0), params)
-
+-- initial tile since the path only contains tiles AFTER the standing tile. This is because if it didn't we would move to our own tile 
+-- for some reason
 		if posMarker then
-			local newPath = TurnModule:CalculatePath(model, tilePath)
-			local GoalIndex = 0
-			print(tilePath)
-			for i, t in pairs(newPath) do
-				if t.Occupying.Value == nil and t:GetAttribute("Traversable") then
-					GoalIndex = i
-				else
-					break
-				end
-			end
-			if GoalIndex == 0 then
-				return 2
-			else
-				for index = #newPath, GoalIndex+1, -1 do 
-					table.remove(newPath, index)
-				end
-			end
-			if newPath == nil or not newPath[1] then return 3 end
+			local newPath = TurnModule:CalculatePath(model, tilePath) -- this is the NEW recalculated path
+-- adjusted for amount of movement left. The original assumes that we have unlimited tiles that we are able to move. 
 			posMarker.Position = newPath[#newPath].Position
 			tileModule:CheckOccupying()
 		end
@@ -323,7 +304,9 @@ function TurnModule:MoveModel(model:Model, tilePath)
 					local tags =CollectionService:GetTags(v)
 					if table.find(tags, "Mud") then
 						if moveTiles.Value  > 1 then
-							human.WalkSpeed = 8
+							human.WalkSpeed = 8 -- by setting the original walkspeed, the
+							-- tween will tween slower since it uses this value to 
+							-- determine how fast to move the model
 							moveTiles.Value -= 1
 						end
 					else
@@ -334,15 +317,15 @@ function TurnModule:MoveModel(model:Model, tilePath)
 					break
 				end
 
-				if tilePath[i-2] and tilePath[i-1] then
-					if GetChangeInDirection(tilePath[i-2], tilePath[i-1],v) == 1 then
-						local ft = TurnModule:FaceTile(model, v)
+				if tilePath[i-2] and tilePath[i-1] then -- checks if we have three tiles to compare
+					if GetChangeInDirection(tilePath[i-2], tilePath[i-1],v) == 1 then -- checks if theres a bend 
+						local ft = TurnModule:FaceTile(model, v) -- twist the model to look
 						ft:Play()
 						ft.Completed:Wait()
 					end
-				elseif tilePath[i-2] == nil and tilePath[i-1] ~= nil then
-					print(tilePath[i-2], tilePath[i-1], v)
-					if GetChangeInDirection(inittile.Instance, tilePath[i-1],v) == 1 then
+				elseif tilePath[i-2] == nil and tilePath[i-1] ~= nil then -- if there are only two tile
+					if GetChangeInDirection(inittile.Instance, tilePath[i-1],v) == 1 then -- we check the initial tile
+						-- as our third tile
 						local ft = TurnModule:FaceTile(model, v)
 						ft:Play()
 						ft.Completed:Wait()
@@ -352,14 +335,14 @@ function TurnModule:MoveModel(model:Model, tilePath)
 				tween:Play()
 				tween.Completed:Wait()
 			end
-			model:FindFirstChild("Moving").Value = false
+			model:FindFirstChild("Moving").Value = false -- only a bool to stop other actions
 		end
 	end
 end
 
--- auxilary function, shortens the amount of repeating lines
+-- auxilary function, shortens the amount of repeating lines. 
 function TurnModule:GetPosMarker(model)
-	local posMarkers = CollectionService:GetTagged(tostring(4745937528))
+	local posMarkers = CollectionService:GetTagged(tostring(4745937528)) -- this number is the tag I used for the Posmarker
 	local marker;
 	for index = 1, #posMarkers do 
 		if posMarkers[index].parent.Value == model then
@@ -369,36 +352,28 @@ function TurnModule:GetPosMarker(model)
 	return marker
 end
 
--- auxilary, just to show the updating path for testing
+-- auxilary, just to show the updating path for testing. Commented in case you want to look
+-- client only! 
 function TurnModule:DrawPath(model, tilePath)
 	if tilePath then
-		if not tilePath[1] then
-			return 
-		end
-		tilePath = TurnModule:CalculatePath(model, tilePath)
-		if tilePath == nil or not tilePath[1] then
-			local folder = game.Workspace:FindFirstChild("arrowFolder")
-			if folder then
-				folder:Destroy()
-			end
-			return
-		end
-		local color = Color3.new(0,.5,0)
-		if #tilePath > model:FindFirstChild("moveTiles").Value then
-			color = Color3.new(.75,0,0)
-		end
-		local folder = game.Workspace:FindFirstChild("arrowFolder")
-
+		local folder = game.Workspace:FindFirstChild("arrowFolder") -- destroy the previously 
+-- drawn path when this new one is made
 		if folder then
 			folder:Destroy()
 		end
-
-		local folder = Instance.new("Folder", workspace)
+		if not tilePath[1] then -- if the path does not exist, return
+			return 
+		end
+		tilePath = TurnModule:CalculatePath(model, tilePath)-- cut the path down to only what the 
+-- model can actually move
+	
+		local color = Color3.new(0,.5,0) 
+		local folder = Instance.new("Folder", workspace) -- make the new folder
 		folder.Name = "arrowFolder"
-		game:GetService("Debris"):AddItem(folder, .6)
-		local size =  tilePath[1].Size
+		game:GetService("Debris"):AddItem(folder, .6) -- incase something goes wrong? just delete the path after .6 seconds
+		local size =  tilePath[1].Size -- get the size of a tile to calculate the ssize
 		local arrowModel = Instance.new("Model",folder)
-		local arrowConnection = Instance.new("Part", arrowModel)
+		local arrowConnection = Instance.new("Part", arrowModel) -- this is the middle part
 		arrowConnection.CanCollide = false
 		arrowConnection.CanQuery = false
 		arrowConnection.CanTouch= false
@@ -406,13 +381,7 @@ function TurnModule:DrawPath(model, tilePath)
 		arrowConnection.Size = Vector3.new(1, 3, size.Z)
 		arrowConnection.Color = color
 		arrowConnection.Material = Enum.Material.Neon
-		local part = Instance.new("Part", arrowModel)
-		part.Anchored = true
-		part.Size = Vector3.new(1,1,1)
-		part.CanQuery = false
-		part.CanCollide =false
-		part.CanTouch = false
-		arrowModel.PrimaryPart = part
+		
 		local params:RaycastParams = RaycastParams.new()
 		params.FilterDescendantsInstances = CollectionService:GetTagged(9069336078)
 		params.FilterType = Enum.RaycastFilterType.Include
@@ -434,21 +403,22 @@ function TurnModule:DrawPath(model, tilePath)
 			arrowConnection.CanQuery = false
 			arrowConnection.CanTouch= false
 			arrowConnection.Anchored = true
-			arrowConnection.Size = Vector3.new(1, 3, size.Z)
+			arrowConnection.Size = Vector3.new(1, 3, size.Z) -- long part that streches across a tile
 			arrowConnection.Color =color
 			arrowConnection.Material = Enum.Material.Neon
 			local part = Instance.new("Part", arrowModel)
 			part.Anchored = true
-			part.Size = Vector3.new(1,1,1)
+			part.Size = Vector3.new(1,1,1) -- the end bit that the next one is drawn off of
 			part.CanQuery = false
 			part.CanCollide =false
 			part.CanTouch = false
 			arrowModel.PrimaryPart = part
 			local goalVector = (tilePath[index+1].Position - tilePath[index].Position) * Vector3.new(0.5, 0, 0.5)
+			-- calculate the looking part from the start of the path to the end of the path, but make it stay
+-- in the middle since the primary part is in the middle of the model
 			arrowModel:PivotTo(CFrame.lookAt(tilePath[index].Position +goalVector, tilePath[index+1].Position))
-
 		end
-		local sphere = Instance.new("Part", folder)
+		local sphere = Instance.new("Part", folder) -- put this one at the end to show the landing tile
 		sphere.Anchored = true
 		sphere.Size = Vector3.new(4,4,4)
 		sphere.CanQuery = false
@@ -459,9 +429,7 @@ function TurnModule:DrawPath(model, tilePath)
 		sphere.Material = Enum.Material.Neon
 		sphere.Position = tilePath[#tilePath].Position
 		sphere.Transparency = .25
-		sphere.Name = "sphere"
-		
+		sphere.Name = "sphere"	
 	end
 end
-
 return TurnModule
