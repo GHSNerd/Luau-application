@@ -34,7 +34,6 @@ end
 -- It also accounts for less optimal tiles, which are tiles that take more movement
 -- to walk across. I used "mud" to denote such tiles, which take a longer time to walk across
 -- For the demonstration in the link, the tiles with large bushes are "muddy" tiles
-local detectingtable = {}
 -- Here is the standard djikstra's algorithm and A* pathfinding
 --@param model to move, final destination tile
 function TurnModule:GetMove(model:Model, goal:Part)
