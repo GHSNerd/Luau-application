@@ -200,44 +200,40 @@ function TurnModule:GetMove(model:Model, goal:Part)
 	return tilepath 	-- return the path
 end
 function TurnModule:CalculatePath(model: Model, tilePath) -- returns a tilePath that is the actual limit of how far a model goes
-	local posMarker = TurnModule:GetPosMarker(model) -- poss
-	if tilePath and posMarker then
-		local moveTiles = model:FindFirstChild("moveTiles")
-		if moveTiles.Value == 0 then
-			return
-		end -- Simple check in case the model is out of available movement 
-		local goalIndex = 1 -- start at 1 since LUA. The tile list is sorted from 1 (first tile to be walked on)
-		-- to #tilepath, which is the last tile to be walked on. We increase this number until
-		-- we run out of movement tiles or we reach the end
-		local totalTiles = moveTiles.Value
-		for i, v in pairs(tilePath) do
-			if totalTiles > 0 then  -- check if we need to keep going. End if we don't
-				local tags = CollectionService:GetTags(v)
-				if table.find(tags, "Mud") then
-					if totalTiles > 1 then
-						totalTiles = totalTiles - 2
-					else -- If the next tile is mud, we need to take two steps to get there
-						-- so this index thing corrects the overshoot.
-						-- If it doens't make sense, I relate.
-						-- Somehow this fixes the issue of overshooting
-						goalIndex -= 1 
-						break
-					end
-				else
-					-- We detrack from the total movement we have
-					totalTiles = totalTiles - 1
-				end
-			else
+	local posMarker = TurnModule:GetPosMarker(model) -- pos
+	if not tilePath or not posMarker then return end 
+
+	local moveTiles = model:FindFirstChild("moveTiles")
+	if moveTiles.Value == 0 then
+		return
+	end -- Simple check in case the model is out of available movement 
+	local goalIndex = 1 -- start at 1 since LUA. The tile list is sorted from 1 (first tile to be walked on)
+	-- to #tilepath, which is the last tile to be walked on. We increase this number until
+	-- we run out of movement tiles or we reach the end
+	local totalTiles = moveTiles.Value
+	for i, v in pairs(tilePath) do
+		if totalTiles <= 0 then break end   -- check if we need to keep going. End if we don't
+		local tags = CollectionService:GetTags(v)
+		if table.find(tags, "Mud") then
+			if totalTiles > 1 then
+				totalTiles = totalTiles - 2
+			else -- If the next tile is mud, we need to take two steps to get there
+				-- so this index thing corrects the overshoot.
+				goalIndex -= 1 
 				break
 			end
-			goalIndex = i -- sset the new goal index
+		else
+			-- We detrack from the total movement we have
+			totalTiles = totalTiles - 1
 		end
-		for index = #tilePath, goalIndex+1, -1 do  -- remove tiles according to maximum path length
-			-- from the end to the beginning to prevent skipping values
-			table.remove(tilePath, index)
-		end
-		return tilePath
+		goalIndex = i -- set the new goal index
 	end
+	for index = #tilePath, goalIndex+1, -1 do  -- remove tiles according to maximum path length
+		-- from the end to the beginning to prevent skipping values
+		table.remove(tilePath, index)
+	end
+	return tilePath
+
 end
 -- Move the model along the path by tweening the model's primary part's cframe
 function TurnModule:TweenModelPosition(model:Model, tile, speed)	
@@ -269,74 +265,67 @@ end
 -- Organizes the code. Also, since movement is limited, it will check the path using the function 
 -- below this one and only move up until the valid amount of tiles have been reached
 function TurnModule:MoveModel(model:Model, tilePath)
-	if tilePath then
-		if model.Moving.Value then return end
-		local moveTiles = model:FindFirstChild("moveTiles")
-		if moveTiles.Value == 0 then -- if the model has no more movement tiles available, just don't even try
-			return 1-- only for testing, 1 is the first return 
-		end
+	if not tilePath then return end
+	if model.Moving.Value then return end
+	local moveTiles = model:FindFirstChild("moveTiles")
+	if moveTiles.Value == 0 then -- if the model has no more movement tiles available, just don't even try
+		return 1-- only for testing, 1 is the first return 
+	end
 
-		local posMarker:Part= TurnModule:GetPosMarker(model) -- get the marker for their 
+	local posMarker:Part= TurnModule:GetPosMarker(model) -- get the marker for their 
 -- position and update it to the goal. The path was already calculated so we have full faith in their
 -- movement
-		local params = RaycastParams.new()
-		params.FilterDescendantsInstances = CollectionService:GetTagged(9069336078)
-		params.FilterType = Enum.RaycastFilterType.Include
-		local inittile = workspace:Raycast(TurnModule:GetPosMarker(model).Position+Vector3.new(0,2,0), Vector3.new(0, -1000, 0), params)
+	local params = RaycastParams.new()
+	params.FilterDescendantsInstances = CollectionService:GetTagged(9069336078)
+	params.FilterType = Enum.RaycastFilterType.Include
+	local inittile = workspace:Raycast(TurnModule:GetPosMarker(model).Position+Vector3.new(0,2,0), Vector3.new(0, -1000, 0), params)
 -- initial tile since the path only contains tiles AFTER the standing tile. This is because if it didn't we would move to our own tile 
 -- for some reason
-		if posMarker then
-			local newPath = TurnModule:CalculatePath(model, tilePath) -- this is the NEW recalculated path
+	if posMarker then
+		local newPath = TurnModule:CalculatePath(model, tilePath) -- this is the NEW recalculated path
 -- adjusted for amount of movement left. The original assumes that we have unlimited tiles that we are able to move. 
-			posMarker.Position = newPath[#newPath].Position
-			tileModule:CheckOccupying()
-		end
-	
-		local request:RemoteEvent = model:FindFirstChild("ServerRequestRemote")
-		local human:Humanoid = model:FindFirstChild("Humanoid")
-		human:SetAttribute("OriginalWalkSpeed", 16)
-		model:FindFirstChild("Moving").Value = true
-		
-		if human then			
-			for i, v in pairs(tilePath) do
-				if moveTiles.Value > 0 then
-					local tags =CollectionService:GetTags(v)
-					if table.find(tags, "Mud") then
-						if moveTiles.Value  > 1 then
-							human.WalkSpeed = 8 -- by setting the original walkspeed, the
-							-- tween will tween slower since it uses this value to 
-							-- determine how fast to move the model
-							moveTiles.Value -= 1
-						end
-					else
-						human.WalkSpeed = human:GetAttribute("OriginalWalkSpeed")
-					end
-					moveTiles.Value -= 1
-				else -- add a check for each update in position to get what can be seen or cannot be seen
-					break
-				end
-
-				if tilePath[i-2] and tilePath[i-1] then -- checks if we have three tiles to compare
-					if GetChangeInDirection(tilePath[i-2], tilePath[i-1],v) == 1 then -- checks if theres a bend 
-						local ft = TurnModule:FaceTile(model, v) -- twist the model to look
-						ft:Play()
-						ft.Completed:Wait()
-					end
-				elseif tilePath[i-2] == nil and tilePath[i-1] ~= nil then -- if there are only two tile
-					if GetChangeInDirection(inittile.Instance, tilePath[i-1],v) == 1 then -- we check the initial tile
-						-- as our third tile
-						local ft = TurnModule:FaceTile(model, v)
-						ft:Play()
-						ft.Completed:Wait()
-					end
-				end 
-				local tween:Tween= self:TweenModelPosition(model, v, (.7/(human.WalkSpeed/10)))
-				tween:Play()
-				tween.Completed:Wait()
-			end
-			model:FindFirstChild("Moving").Value = false -- only a bool to stop other actions
-		end
+		posMarker.Position = newPath[#newPath].Position
+		tileModule:CheckOccupying()
 	end
+
+	local request:RemoteEvent = model:FindFirstChild("ServerRequestRemote")
+	local human:Humanoid = model:FindFirstChild("Humanoid")
+	human:SetAttribute("OriginalWalkSpeed", 16)
+	model:FindFirstChild("Moving").Value = true
+	if not human then return end
+	for i, v in pairs(tilePath) do
+	-- add a check for each update in position to get what can be seen or cannot be seen
+		if moveTiles.Value <= 0 then break end
+		local tags =CollectionService:GetTags(v)
+		if table.find(tags, "Mud") then
+			if moveTiles.Value <= 1 then return end 
+			human.WalkSpeed = 8 -- by setting the original walkspeed, the
+			-- tween will tween slower since it uses this value to 
+			-- determine how fast to move the model
+			moveTiles.Value -= 1
+		else
+			human.WalkSpeed = human:GetAttribute("OriginalWalkSpeed")
+		end
+		moveTiles.Value -= 1
+		if tilePath[i-2] and tilePath[i-1] then -- checks if we have three tiles to compare
+			if GetChangeInDirection(tilePath[i-2], tilePath[i-1],v) == 1 then -- checks if theres a bend 
+				local ft = TurnModule:FaceTile(model, v) -- twist the model to look
+				ft:Play()
+				ft.Completed:Wait()
+			end
+		elseif tilePath[i-2] == nil and tilePath[i-1] ~= nil then -- if there are only two tile
+			if GetChangeInDirection(inittile.Instance, tilePath[i-1],v) == 1 then -- we check the initial tile
+				-- as our third tile
+				local ft = TurnModule:FaceTile(model, v)
+				ft:Play()
+				ft.Completed:Wait()
+			end
+		end 
+		local tween:Tween= self:TweenModelPosition(model, v, (.7/(human.WalkSpeed/10)))
+		tween:Play()
+		tween.Completed:Wait()
+	end
+	model:FindFirstChild("Moving").Value = false -- only a bool to stop other actions
 end
 
 -- auxilary function, shortens the amount of repeating lines. 
